@@ -1,238 +1,180 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>ich liebe dich – Linien formen Schrift</title>
-  <style>
-    html,body{margin:0;height:100%;background:#0b0f14;overflow:hidden;}
-    canvas{display:block;}
-    .hint{position:fixed;left:12px;bottom:12px;color:#aab;opacity:.85;font:12px/1.2 system-ui}
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>ich liebe dich – klar lesbar</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0f14;overflow:hidden}
+  .hint{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);color:#aab;font:12px/1.3 system-ui;opacity:.85;text-align:center;pointer-events:none}
+</style>
 </head>
 <body>
-  <div class="hint">[R] neu • Klick: Palette • Linien formen “ich liebe dich” → halten → lösen (Loop ~30s)</div>
-  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
-  <script>
-    // ---------------- Parameter ----------------
-    let agents = [];
-    let fieldScale = 0.0025;     // Dichte/Detailgrad des Flowfields (frei)
-    let stepsPerFrame = 4;       // Zeichen-Geschwindigkeit
-    let maxAge = 600;            // Lebensdauer der Partikel
-    let palettes = [
-      ["#00F5D4","#00BBF9","#6A00F4","#F20089","#FF5964","#FFE45E"],
-      ["#00FFA3","#19A1F7","#7C3AED","#F472B6","#FF7A00","#FFD60A"],
-      ["#64DFDF","#6930C3","#80FFDB","#FF4D6D","#B5179E","#4CC9F0"]
-    ];
-    let paletteIdx = 0;
-    let bgCol = "#0b0f14";
-    let seed;
+<div class="hint">Tippen: Palette • R: Reset • jetzt mit schärferem Letter-Sog</div>
+<script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+<script>
+let agents=[], fieldScale=0.0025, stepsPerFrame=4, maxAge=600;
+let palettes=[["#00F5D4","#00BBF9","#6A00F4","#F20089","#FF5964","#FFE45E"],
+              ["#00FFA3","#19A1F7","#7C3AED","#F472B6","#FF7A00","#FFD60A"],
+              ["#64DFDF","#6930C3","#80FFDB","#FF4D6D","#B5179E","#4CC9F0"]];
+let paletteIdx=0, bgCol="#0b0f14", seed;
 
-    // Schrift-Feld
-    const PHRASE = "ich liebe dich";
-    let g;                 // offscreen p5.Graphics
-    let textBounds;        // ungefähre Bounding Box (für Spawn/Skalierung)
-    let fontSizeFactor = 0.26;  // Anteil der kurzen Kante
+// ——— Klarheits-Booster (anpassbar) ———
+const PHRASE="ich\nliebe\ndich";  // Hochformat
+const TOTAL_MS=30000, BUILD_FRAC=.42, HOLD_FRAC=.20; // länger halten
+const FONT_FACTOR=0.22;           // größer = klarer
+const TEXT_PULL_BASE=2.4;         // Sog in Richtung Buchstaben (hoch = klarer)
+const TEXT_EDGE_LOCK=0.55;        // 0..1 wie stark Partikel an Kante „einrasten“
+const SPAWN_TEXT_SHARE=0.55;      // Anteil Agents, die direkt auf Text spawnen
+const OUTLINE_GLOW=0.25;          // 0..1 Zusatz-Konturglow
+const EXTRA_DENSITY=1.25;         // >1 = mehr Agents
 
-    // Sequenzzeiten (gesamt ~30s)
-    const TOTAL_MS = 30000;
-    const BUILD_FRAC = 0.42;  // Anteil “Formieren”
-    const HOLD_FRAC  = 0.18;  // Anteil “Halten”
-    const DISS_FRAC  = 1 - BUILD_FRAC - HOLD_FRAC; // “Auflösen”
+let g; // offscreen für Textmaske
 
-    function setup(){
-      createCanvas(window.innerWidth, window.innerHeight);
-      pixelDensity(1);
-      noFill();
-      g = createGraphics(window.innerWidth, window.innerHeight);
-      g.pixelDensity(1);
-      resetArt(true);
-    }
+function setup(){
+  createCanvas(windowWidth, windowHeight);
+  pixelDensity(1); noFill(); blendMode(ADD);
+  g=createGraphics(windowWidth, windowHeight); g.pixelDensity(1);
+  resetArt(true);
+}
+function windowResized(){
+  resizeCanvas(windowWidth, windowHeight);
+  g=createGraphics(windowWidth, windowHeight); g.pixelDensity(1);
+  resetArt(true);
+}
+function mousePressed(){ paletteIdx=(paletteIdx+1)%palettes.length; resetArt(false); }
+function keyPressed(){ if(key==='r'||key==='R') resetArt(true); }
 
-    function windowResized(){
-      resizeCanvas(window.innerWidth, window.innerHeight);
-      g = createGraphics(window.innerWidth, window.innerHeight);
-      g.pixelDensity(1);
-      resetArt(true);
-    }
+function resetArt(clearBG){
+  seed=floor(random(1e9)); randomSeed(seed); noiseSeed(seed);
+  if(clearBG) background(bgCol);
+  agents=[];
+  const count=floor((width*height)/1200*EXTRA_DENSITY);
+  for(let i=0;i<count;i++) agents.push( (random()<SPAWN_TEXT_SHARE)? makeAgentOnText() : makeAgentAnywhere() );
+  buildTextField();
+}
 
-    function keyPressed(){
-      if(key === 'r' || key === 'R') resetArt(true);
-      if(key === 's' || key === 'S') saveCanvas("generative", "png");
-    }
+function buildTextField(){
+  g.clear();
+  const fs=max(22, floor(min(width,height)*FONT_FACTOR));
+  g.push();
+  g.textAlign(CENTER,CENTER);
+  g.textSize(fs); g.textLeading(fs*1.06); g.textStyle(BOLD);
+  g.fill(255);
+  g.text(PHRASE, width/2, height/2);
+  g.pop();
+  g.loadPixels();
+}
 
-    function mousePressed(){
-      paletteIdx = (paletteIdx + 1) % palettes.length;
-      resetArt(false);
-    }
+function alphaAt(x,y){
+  x=constrain(x|0,0,g.width-1); y=constrain(y|0,0,g.height-1);
+  return g.pixels[(y*g.width+x)*4+3]||0;
+}
+function textGradient(x,y){
+  const s=2;
+  const gx=(alphaAt(x+s,y)-alphaAt(x-s,y))*0.5;
+  const gy=(alphaAt(x,y+s)-alphaAt(x,y-s))*0.5;
+  const v=createVector(gx,gy);
+  if(v.magSq()>0) v.normalize();
+  return v;
+}
+const easeInOut=x=>x<.5?2*x*x:1-(-2*x+2)**2/2;
+function phase(){
+  const t=(millis()%TOTAL_MS)/TOTAL_MS;
+  if(t<BUILD_FRAC) return {kText:easeInOut(t/BUILD_FRAC), mode:'build'};
+  if(t<BUILD_FRAC+HOLD_FRAC) return {kText:1, mode:'hold'};
+  const k=(t-BUILD_FRAC-HOLD_FRAC)/(1-BUILD_FRAC-HOLD_FRAC);
+  return {kText:1-easeInOut(k), mode:'diss'};
+}
 
-    function resetArt(clearBG){
-      seed = floor(random(1e9));
-      randomSeed(seed); noiseSeed(seed);
-      if(clearBG){ background(bgCol); }
-      blendMode(ADD);
-      agents = [];
-      const count = floor((width*height) / 1200);
-      for(let i=0;i<count;i++){
-        agents.push(makeAgent());
-      }
-      buildTextField(); // Offscreen-Schrift neu rendern
-    }
+function makeAgentAnywhere(){
+  const p=createVector(random(width),random(height));
+  const c=color(random(palettes[paletteIdx]));
+  return {p, prev:p.copy(), age:0, speed:random(0.55,1.8), w:random(0.7,1.8), c, jitter:random(0.002,0.01)};
+}
+function makeAgentOnText(){
+  // Rejection Sampling nahe Buchstaben
+  let x=0,y=0,a=0, tries=0;
+  do{
+    x = random(width); y = random(height); a = alphaAt(x,y);
+    tries++;
+  } while(a<150 && tries<400);
+  const p=createVector(x,y);
+  const c=color(random(palettes[paletteIdx]));
+  return {p, prev:p.copy(), age:0, speed:random(0.55,1.8), w:random(0.7,1.8), c, jitter:random(0.002,0.01)};
+}
 
-    // ---- Offscreen-Textfeld aufbauen (für Vektoranziehung) ----
-    function buildTextField(){
-      g.clear();
-      const minSide = min(width, height);
-      const fs = max(28, floor(minSide * fontSizeFactor));
-      g.push();
-      g.textAlign(CENTER, CENTER);
-      g.textSize(fs);
-      g.textStyle(BOLD);
-      g.noStroke();
-      g.fill(255);
-      // leichte Unschärfe-Schicht für stabilere Gradienten
-      g.text(PHRASE, width/2, height/2);
-      g.pop();
-      g.loadPixels();
-    }
+function flow(x,y,t){ return noise(x*fieldScale,y*fieldScale,t)*TAU*2; }
 
-    // Alpha an Position (0–255)
-    function alphaAt(x, y){
-      x = constrain(floor(x), 0, g.width-1);
-      y = constrain(floor(y), 0, g.height-1);
-      const idx = (y * g.width + x) * 4 + 3;
-      return g.pixels[idx] || 0;
-    }
+function draw(){
+  const ph=phase();
+  for(let s=0;s<stepsPerFrame;s++) stepAgents(ph);
+  // dezente Trails
+  noStroke(); fill(11,15,20,6); rect(0,0,width,height);
 
-    // Gradientenfeld (zeigt in Richtung “mehr Text”)
-    function textGradient(x, y){
-      // zentrale Differenzen (sanft)
-      const s = 2; // Sample-Abstand in Pixeln
-      const ax1 = alphaAt(x+s, y), ax0 = alphaAt(x-s, y);
-      const ay1 = alphaAt(x, y+s), ay0 = alphaAt(x, y-s);
-      const gx = (ax1 - ax0) * 0.5; // -255..255
-      const gy = (ay1 - ay0) * 0.5;
-      const v = createVector(gx, gy);
-      if(v.magSq()>0) v.normalize();
-      return v;
-    }
-
-    // Feldgewicht 0..1 in Abhängigkeit der Zeit (ease)
-    function sequenceWeights(){
-      const t = (millis() % TOTAL_MS) / TOTAL_MS; // 0..1
-      if(t < BUILD_FRAC){
-        const k = t / BUILD_FRAC;             // 0..1
-        return easeInOut(k);                  // Text-Einfluss wächst
-      }else if(t < BUILD_FRAC + HOLD_FRAC){
-        return 1;                             // maximaler Texteffekt (halten)
-      }else{
-        const k = (t - BUILD_FRAC - HOLD_FRAC) / DISS_FRAC; // 0..1
-        return 1 - easeInOut(k);              // Text-Einfluss lässt nach
+  // zarter Konturglow (nur wenn Text stark wirkt)
+  if(ph.kText>0.25 && OUTLINE_GLOW>0){
+    push(); blendMode(ADD);
+    stroke(255, 18*OUTLINE_GLOW); strokeWeight(1);
+    noFill();
+    for(let i=0;i<70;i++){
+      const x=random(width), y=random(height);
+      if(alphaAt(x,y)>180){
+        const gdir=textGradient(x,y);
+        line(x, y, x+gdir.x*10, y+gdir.y*10);
       }
     }
+    pop();
+  }
+}
 
-    // sanfte Ease-Funktion
-    function easeInOut(x){ return x<.5 ? 2*x*x : 1 - pow(-2*x+2, 2)/2; }
+function stepAgents(ph){
+  const t=frameCount*0.003, kText=ph.kText;
+  for(let i=0;i<agents.length;i++){
+    const a=agents[i];
 
-    function makeAgent(){
-      const p = createVector(random(width), random(height));
-      const hue = color(random(palettes[paletteIdx]));
-      const w = random(0.6, 1.6);
-      const jitter = random(0.002, 0.01);
-      return {
-        p, prev:p.copy(),
-        age: 0,
-        speed: random(0.5, 1.7),
-        w,
-        c: hue,
-        jitter
-      };
+    // Frei-Flow
+    const ang=flow(a.p.x,a.p.y,t)+(noise(a.p.x*a.jitter,a.p.y*a.jitter)-0.5)*0.5;
+    const vFree=p5.Vector.fromAngle(ang).mult(a.speed);
+
+    // Text-Pull (stark & klar)
+    const grad=textGradient(a.p.x,a.p.y);
+    const A=alphaAt(a.p.x,a.p.y)/255;
+    const pull = (0.35 + A*TEXT_PULL_BASE) * a.speed;
+    let vText = grad.copy().mult(pull);
+
+    // Edge-Lock: an Kanten entlanglaufen statt quer
+    if(kText>0.5 && A>0.5){
+      // Tangente = Rotation der Gradientenrichtung um 90°
+      const tangent = createVector(-grad.y, grad.x);
+      tangent.normalize().mult(a.speed*TEXT_EDGE_LOCK*(0.6+0.8*A));
+      vText.add(tangent);
     }
 
-    function flow(x, y, t){
-      const a = noise(x*fieldScale, y*fieldScale, t)*TAU*2;
-      return a;
+    // Mischung
+    const v=p5.Vector.lerp(vFree, vText, kText);
+    a.prev.set(a.p); a.p.add(v);
+
+    // Lebenszyklus / Respawn bias Richtung Text während build/hold
+    a.age++;
+    if(a.age>maxAge||a.p.x<-14||a.p.x>width+14||a.p.y<-14||a.p.y>height+14){
+      agents[i] = (random() < (kText*0.8)) ? makeAgentOnText() : makeAgentAnywhere();
+      continue;
     }
 
-    function draw(){
-      for(let s=0; s<stepsPerFrame; s++){
-        stepAgents();
-      }
-      // leichte Vignette / Nachglühen
-      noStroke();
-      fill(11,15,20, 6);
-      rect(0,0,width,height);
-    }
+    // Zeichnen: heller & dicker auf Buchstaben
+    const near=A;
+    const bright=lerp(0,110, pow(near,0.9)*kText);       // mehr Helligkeit auf Text
+    const wScale=1 + 0.8*near*kText;                     // breitere Linien auf Text
+    const alpha = map(noise(a.p.x*0.005,a.p.y*0.005,t),0,1,50,140)+bright;
 
-    function stepAgents(){
-      const t = frameCount * 0.003;
-      const kText = sequenceWeights(); // 0..1
+    strokeWeight(a.w*wScale);
+    stroke(red(a.c),green(a.c),blue(a.c),constrain(alpha,40,255));
+    line(a.prev.x,a.prev.y,a.p.x,a.p.y);
 
-      for(let i=0;i<agents.length;i++){
-        const a = agents[i];
-
-        // --- Richtungsvektoren ---
-        // 1) freies Flowfeld
-        const ang = flow(a.p.x, a.p.y, t) + (noise(a.p.x*a.jitter, a.p.y*a.jitter)-0.5)*0.6;
-        const vFree = p5.Vector.fromAngle(ang).mult(a.speed);
-
-        // 2) Text-Gradient: zieht in Bereiche hoher Schrift-Alpha
-        const grad = textGradient(a.p.x, a.p.y); // normiert
-        // Stärke abhängig davon, wie nah wir am Text sind
-        const A = alphaAt(a.p.x, a.p.y)/255; // 0..1
-        // sanfte Anhebung nahe der Buchstaben
-        const pull = map(A, 0, 1, 0.4, 1.8) * a.speed * 1.0;
-        const vText = grad.mult(pull);
-
-        // Mischung: zuerst frei, dann zunehmend Schrift
-        const v = p5.Vector.lerp(vFree, vText, kText);
-
-        // Positionsupdate
-        a.prev.set(a.p);
-        a.p.add(v);
-
-        // Alter / Respawn
-        a.age++;
-        if(a.age > maxAge || a.p.x<-12 || a.p.x>width+12 || a.p.y<-12 || a.p.y>height+12){
-          agents[i] = makeAgent();
-          continue;
-        }
-
-        // Zeichnen
-        const nearText = alphaAt(a.p.x, a.p.y)/255; // Nähe zur Schrift
-        const brightnessBoost = lerp(0, 80, pow(nearText, 0.8) * kText); // heller auf den Buchstaben
-        const alphaDyn = map(noise(a.p.x*0.005, a.p.y*0.005, t),0,1,40,120) + brightnessBoost;
-
-        strokeWeight( a.w * (1 + 0.6*nearText*kText) );
-        stroke(red(a.c), green(a.c), blue(a.c), constrain(alphaDyn, 30, 200));
-        line(a.prev.x, a.prev.y, a.p.x, a.p.y);
-
-        // gelegentlich feiner Punkt
-        if(a.age % 23 === 0){
-          strokeWeight(a.w*0.55);
-          point(a.p.x, a.p.y);
-        }
-      }
-
-      // optional: sehr dezenter “Glow” um die Phrase (nur in Build/Hold sichtbar)
-      if(sequenceWeights()>0.25){
-        push();
-        blendMode(ADD);
-        noFill();
-        stroke(255, 18);
-        strokeWeight(1);
-        // weiche Konturen skizzieren, indem wir grob die Alpha-Kanten abfahren
-        // (sparsam: nur wenige zufällige Samples)
-        for(let s=0; s<60; s++){
-          const x = random(width), y = random(height);
-          if(alphaAt(x,y)>180){
-            const gdir = textGradient(x,y);
-            line(x, y, x + gdir.x*8, y + gdir.y*8);
-          }
-        }
-        pop();
-      }
-    }
-  </script>
+    if(a.age%20===0){ strokeWeight(a.w*0.6*wScale); point(a.p.x,a.p.y); }
+  }
+}
+</script>
 </body>
 </html>
