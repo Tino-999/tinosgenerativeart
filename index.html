@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Generative Netzgrafik</title>
+  <style>
+    html,body{margin:0;height:100%;background:#0b0f14;overflow:hidden;}
+    canvas{display:block;}
+    .hint{position:fixed;left:12px;bottom:12px;color:#aab;opacity:.8;font:12px/1.2 system-ui;}
+  </style>
+</head>
+<body>
+  <div class="hint">Tasten: [R] neu • Klick: Farbmodus wechseln</div>
+  <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  <script>
+    // ——— Parameter ———
+    let agents = [];
+    let fieldScale = 0.0025;     // Dichte/Detailgrad des Flowfields
+    let stepsPerFrame = 4;       // Zeichen-Geschwindigkeit
+    let maxAge = 600;            // Lebensdauer der Partikel
+    let palettes = [
+      // neonartige Paletten
+      ["#00F5D4","#00BBF9","#6A00F4","#F20089","#FF5964","#FFE45E"],
+      ["#00FFA3","#19A1F7","#7C3AED","#F472B6","#FF7A00","#FFD60A"],
+      ["#64DFDF","#6930C3","#80FFDB","#FF4D6D","#B5179E","#4CC9F0"]
+    ];
+    let paletteIdx = 0;
+    let bgCol = "#0b0f14";
+    let seed;
+
+    function setup(){
+      createCanvas(window.innerWidth, window.innerHeight);
+      pixelDensity(1);
+      noFill();
+      resetArt();
+    }
+
+    function windowResized(){
+      resizeCanvas(window.innerWidth, window.innerHeight);
+      resetArt();
+    }
+
+    function keyPressed(){
+      if(key === 'r' || key === 'R') resetArt();
+      if(key === 's' || key === 'S') saveCanvas("generative", "png");
+    }
+
+    function mousePressed(){
+      paletteIdx = (paletteIdx + 1) % palettes.length;
+      resetArt();
+    }
+
+    function resetArt(){
+      seed = floor(random(1e9));
+      randomSeed(seed); noiseSeed(seed);
+      background(bgCol);
+      blendMode(ADD);           // leuchtende Überlagerungen
+      agents = [];
+      const count = floor((width*height) / 1200); // adaptive Anzahl
+      for(let i=0;i<count;i++){
+        agents.push(makeAgent());
+      }
+    }
+
+    function makeAgent(){
+      const p = createVector(random(width), random(height));
+      const hue = color(random(palettes[paletteIdx]));
+      const w = random(0.6, 1.6);
+      const jitter = random(0.002, 0.01);
+      return {
+        p, prev:p.copy(),
+        age: 0,
+        speed: random(0.4, 1.6),
+        w,
+        c: hue,
+        jitter
+      };
+    }
+
+    function flow(x, y, t){
+      // Perlin-Flowfeld mit leichter Zeitmodulation
+      const a = noise(x*fieldScale, y*fieldScale, t)*TAU*2;
+      return a;
+    }
+
+    function draw(){
+      for(let s=0; s<stepsPerFrame; s++){
+        stepAgents();
+      }
+      // leichte Vignette für Tiefe
+      noStroke();
+      fill(11,15,20, 6);
+      rect(0,0,width,height);
+    }
+
+    function stepAgents(){
+      const t = frameCount*0.003;
+      for(let i=0;i<agents.length;i++){
+        const a = agents[i];
+        // Richtung aus Flowfeld
+        const ang = flow(a.p.x, a.p.y, t) + (noise(a.p.x*a.jitter, a.p.y*a.jitter)-0.5)*0.6;
+        const v = p5.Vector.fromAngle(ang).mult(a.speed);
+        a.prev.set(a.p);
+        a.p.add(v);
+
+        // Zurücksetzen, wenn alt oder aus dem Bild
+        a.age++;
+        if(a.age > maxAge || a.p.x<-10 || a.p.x>width+10 || a.p.y<-10 || a.p.y>height+10){
+          agents[i] = makeAgent();
+          continue;
+        }
+
+        // Zeichnen: halbtransparente Linien für glühenden Look
+        strokeWeight(a.w);
+        const col = a.c.levels.slice(); // [r,g,b,a]
+        // dynamische Transparenz
+        const alpha = map(noise(a.p.x*0.005, a.p.y*0.005, t),0,1,40,140);
+        stroke(red(a.c), green(a.c), blue(a.c), alpha);
+        line(a.prev.x, a.prev.y, a.p.x, a.p.y);
+
+        // gelegentlich Knotenpunkte
+        if(a.age % 25 === 0){
+          strokeWeight(a.w*0.6);
+          point(a.p.x, a.p.y);
+        }
+      }
+    }
+  </script>
+</body>
+</html>
